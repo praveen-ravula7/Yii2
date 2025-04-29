@@ -1,0 +1,153 @@
+---
+- name: Setup Prometheus and Node Exporter
+  hosts: ec2
+  become: yes
+  vars:
+    prometheus_version: 2.46.0
+    node_exporter_version: 1.6.1
+    prometheus_dir: /opt/prometheus
+    node_exporter_dir: /opt/node_exporter
+
+  tasks:
+    # Create users
+    - name: Create prometheus user
+      user:
+        name: prometheus
+        shell: /bin/false
+        system: yes
+        create_home: no
+
+    - name: Create node_exporter user
+      user:
+        name: node_exporter
+        shell: /bin/false
+        system: yes
+        create_home: no
+
+    # Download and install Node Exporter
+    - name: Create Node Exporter directory
+      file:
+        path: "{{ node_exporter_dir }}"
+        state: directory
+        owner: node_exporter
+        group: node_exporter
+
+    - name: Download Node Exporter
+      get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        mode: '0644'
+
+    - name: Extract Node Exporter
+      unarchive:
+        src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: "/tmp"
+        remote_src: yes
+
+    - name: Move Node Exporter binary
+      copy:
+        src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+        dest: "{{ node_exporter_dir }}/node_exporter"
+        remote_src: yes
+        owner: node_exporter
+        group: node_exporter
+        mode: '0755'
+
+    # Setup Node Exporter service
+    - name: Create Node Exporter systemd service
+      template:
+        src: templates/node_exporter.service.j2
+        dest: /etc/systemd/system/node_exporter.service
+        mode: '0644'
+      notify: Restart Node Exporter
+
+    # Download and install Prometheus
+    - name: Create Prometheus directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: prometheus
+        group: prometheus
+      with_items:
+        - "{{ prometheus_dir }}"
+        - "{{ prometheus_dir }}/data"
+
+    - name: Download Prometheus
+      get_url:
+        url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+        dest: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+        mode: '0644'
+
+    - name: Extract Prometheus
+      unarchive:
+        src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+        dest: "/tmp"
+        remote_src: yes
+
+    - name: Move Prometheus binaries
+      copy:
+        src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+        dest: "{{ prometheus_dir }}/{{ item }}"
+        remote_src: yes
+        owner: prometheus
+        group: prometheus
+        mode: '0755'
+      with_items:
+        - prometheus
+        - promtool
+
+    - name: Copy Prometheus config
+      template:
+        src: templates/prometheus.yml.j2
+        dest: "{{ prometheus_dir }}/prometheus.yml"
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+      notify: Restart Prometheus
+
+    # Setup Prometheus service
+    - name: Create Prometheus systemd service
+      template:
+        src: templates/prometheus.service.j2
+        dest: /etc/systemd/system/prometheus.service
+        mode: '0644'
+      notify: Restart Prometheus
+
+    # Start services
+    - name: Start and enable Node Exporter
+      systemd:
+        name: node_exporter
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Start and enable Prometheus
+      systemd:
+        name: prometheus
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    # Configure Docker to expose metrics
+    - name: Create Docker daemon.json
+      template:
+        src: templates/docker-daemon.json.j2
+        dest: /etc/docker/daemon.json
+        mode: '0644'
+      notify: Restart Docker
+
+  handlers:
+    - name: Restart Node Exporter
+      systemd:
+        name: node_exporter
+        state: restarted
+
+    - name: Restart Prometheus
+      systemd:
+        name: prometheus
+        state: restarted
+
+    - name: Restart Docker
+      systemd:
+        name: docker
+        state: restarted
