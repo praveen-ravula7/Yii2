@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  app:
+    image: ${DOCKER_IMAGE_NAME:-username/yii2-app}:${DOCKER_IMAGE_TAG:-latest}
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      healthcheck:
+        test: ["CMD", "curl", "-f", "http://localhost:9000/status"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+        start_period: 40s
+    environment:
+      - YII_ENV=prod
+      - YII_DEBUG=0
+      - DB_HOST=db
+      - DB_NAME=yii2app
+      - DB_USER=yii2user
+      - DB_PASS=yii2password
+    networks:
+      - app-network
+    volumes:
+      - app-data:/var/www/html/runtime
+
+  db:
+    image: mysql:8.0
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+    environment:
+      - MYSQL_DATABASE=yii2app
+      - MYSQL_USER=yii2user
+      - MYSQL_PASSWORD=yii2password
+      - MYSQL_ROOT_PASSWORD=root_password
+    volumes:
+      - db-data:/var/lib/mysql
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+networks:
+  app-network:
+    driver: overlay
+
+volumes:
+  app-data:
+  db-data:
